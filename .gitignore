@@ -1,0 +1,5 @@
+/kops/ 
+terraform.tfstate*
+tfplan
+.terraform
+

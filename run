@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+
+# First, read about: https://github.com/kubernetes/kops/blob/master/docs/aws.md#configure-dns
+CLUSTERNAME='mongo.k8s.local'
+
+# Environment
+NAMESPACE_ID="develop"
+
+#Kubernetes version
+KUBERNETES_VER="1.10.5"
+
+# If you want to using a gossip-based cluster with Bastion, read about: https://github.com/kubernetes/kops/blob/master/docs/examples/kops-tests-private-net-bastion-host.md#adding-a-bastion-host-to-our-cluster
+BASTION=false
+
+# Networking, read about: https://github.com/kubernetes/kops/blob/master/docs/networking.md
+NETWORKING="weave"
+VPC_CIDR='172.77.0.0/16'
+
+# Number of nodes and master
+NODE_COUNT=3
+MASTER_COUNT=3
+
+# Master size and nodes size
+NODE_SIZE="t2.medium"
+MASTER_SIZE="t2.medium"
+
+# Master and Nodes Volumes size
+NODE_VOLUME_SIZE=10
+MASTER_VOLUME_SIZE=10
+
+# For kubernetes files
+TMP_KUBE='./kops'
+
+# My IP address
+MYIP="$(curl -s https://diagnostic.opendns.com/myip)/32"
+
+# Shard Replica Sets:
+# shard-local user and cluster administrator
+SHARDED_USER="admin"
+SHARDED_PASSWD="abcde12345"
+
+# Mongos Router:
+# user and cluster administrator
+MONGOS_USER="admin"
+MONGOS_PASSWD="abcde12345"
+
+
+
+PARAM="$1"
+TMPFILE=$(mktemp)
+
+
+usage() {
+    echo -e "Usage:"
+    echo -e "  $0 setup       Install the latest version of Terraform, Kops, Kubectl and Jq."
+    echo -e "  $0 provision   Terraforming on AWS and provisioning the kubernetes cluster."
+    echo -e "  $0 connection  Show conection to sharded cluster."
+    echo -e "  $0 destroy     Destroy all cluster and terraforming."
+    exit 1
+}
+
+setup() {
+    # Install Terraform
+    if ! [ -x "$(command -v terraform)" ]; then
+      wget -qO- https://releases.hashicorp.com/terraform/0.11.7/terraform_0.11.7_linux_amd64.zip | bsdtar -xvf-
+      chmod u+x ./terraform; sudo mv ./terraform /usr/local/bin/terraform
+      exit 0
+    fi
+    # Install Kops
+    if ! [ -x "$(command -v kops)" ]; then
+      curl -LO https://github.com/kubernetes/kops/releases/download/$(curl -s https://api.github.com/repos/kubernetes/kops/releases/latest | grep tag_name | cut -d '"' -f 4)/kops-linux-amd64
+      chmod +x ./kops-linux-amd64; sudo mv ./kops-linux-amd64 /usr/local/bin/kops
+      exit 0
+    fi
+    # Install Kubectl 1.10.3
+    if ! [ -x "$(command -v kubectl)" ]; then
+      curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.10.3/bin/linux/amd64/kubectl
+      chmod +x ./kubectl; sudo mv ./kubectl /usr/local/bin/kubectl
+      exit 0
+    fi
+    # Install JQ
+    if ! [ -x "$(command -v jq)" ]; then
+      curl -LO https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64
+      chmod +x ./jq-linux64; sudo mv ./jq-linux64 /usr/local/bin/jq
+      exit 0
+    fi
+
+}
+
+provision() {
+
+    if [ -x "$(command -v terraform)" ]; then
+        echo "terraform: Terraforming on AWS"
+        terraform init -input=false; terraform plan -var name="$CLUSTERNAME" -var vpc_cidr="$VPC_CIDR" -out tfplan -input=false; terraform apply -input=false tfplan
+    else
+        echo "Install terraform with: ./run setup"
+    fi
+
+    if [ -x "$(command -v terraform)" ]; then
+        
+        echo "kops: Create a cluster"
+        kops create cluster --v 0 --name=$(terraform output cluster_name) --state=$(terraform output state_store) \
+            --master-size=$MASTER_SIZE --master-volume-size=$MASTER_VOLUME_SIZE --master-count=$MASTER_COUNT --master-zones=$(terraform output -json availability_zones | jq -r '.value|join(",")') \
+            --node-size=$NODE_SIZE --node-volume-size=$NODE_VOLUME_SIZE --node-count=$NODE_COUNT --zones=$(terraform output -json availability_zones | jq -r '.value|join(",")') \
+            --admin-access="$MYIP" \
+            --admin-access=$(terraform output -module=vpc cidr_block) \
+            --ssh-access="$MYIP" \
+            --ssh-access=$(terraform output -module=vpc cidr_block) \
+            --vpc=$(terraform output vpc_id) \
+            --network-cidr=$(terraform output -module=vpc cidr_block) \
+            --networking=$NETWORKING \
+            --topology=private \
+            --bastion=$BASTION \
+            --dns=public \
+            --dns-zone=$(terraform output cluster_name) \
+            --kubernetes-version="$KUBERNETES_VER" \
+            --api-loadbalancer-type=public \
+            --associate-public-ip=false \
+            --cloud=aws \
+            --ssh-public-key "~/.ssh/id_rsa.pub" \
+            --cloud-labels Cluster="$CLUSTERNAME" \
+            --out="$TMP_KUBE" --target=terraform
+
+        echo "kops: Updating..."
+        kops update cluster --name=$(terraform output cluster_name) --state=$(terraform output state_store) --yes
+
+        echo "kops: Create kubecfg settings for kubectl"
+        kops export kubecfg --name=$(terraform output cluster_name) --state=$(terraform output state_store)
+
+        echo "kops: For validate the cluster, you must wait 5 min"
+        sleep 5m
+        
+        echo "kops: Validate the cluster"
+        kops validate cluster --name=$(terraform output cluster_name) --state=$(terraform output state_store)
+
+        echo "terraform: Terraforming on AWS"
+        terraform init -input=false; terraform plan -var name="$CLUSTERNAME" -var vpc_cidr="$VPC_CIDR" -out tfplan -input=false; terraform apply -input=false tfplan
+    
+    else
+        echo "Install kops with ./run setup"
+        exit 1
+    fi
+
+    echo "kubectl: Get all nodes including all namespaces"
+    kubectl --v=0 get all --all-namespaces
+
+    echo "kubectl: Create the namespace ${NAMESPACE_ID}"
+    kubectl --v=0 apply -f ./kubernetes/namespace.yaml
+
+    echo "kubectl: Create storage class"
+    kubectl --v=0 apply -f ./kubernetes/mongodb-storageclass-ssd-aws.yaml
+
+    if [ -x "$(command -v openssl)" ]; then
+        openssl rand -base64 741 > $TMPFILE
+        kubectl --v=0 --namespace=$NAMESPACE_ID create secret generic shared-bootstrap-data --from-file=internal-auth-mongodb-keyfile=$TMPFILE
+        rm $TMPFILE
+    else
+        echo "Please install OpenSSL"
+        exit 1
+    fi
+
+    #### Config Cluster
+    echo -e "\e[31mDeploy MongoDB config cluster\e[0m"
+    kubectl --v=0 apply -f ./kubernetes/mongodb-configdb-service-stateful.yaml
+
+    for i in 0 1 2
+    do
+        until kubectl --v=0 exec --namespace=$NAMESPACE_ID mongodb-configdb-$i -c mongodb-configdb-container -- mongo --port 27019 --quiet --eval 'db.getMongo()'; do
+            echo -n "mongodb-configdb-$i: "
+        done
+    done
+
+    echo -e "\e[31mInitialize the replica set config\e[0m"
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID mongodb-configdb-0 -c mongodb-configdb-container -- mongo --port 27019 --quiet --eval "rs.initiate({ 
+        _id: \"ReplSetConfig\", 
+        version: 1, members: [ 
+                { _id: 0, host: \"mongodb-configdb-0.mongodb-configdb-service.${NAMESPACE_ID}.svc.cluster.local:27019\" },
+                { _id: 1, host: \"mongodb-configdb-1.mongodb-configdb-service.${NAMESPACE_ID}.svc.cluster.local:27019\" },
+                { _id: 2, host: \"mongodb-configdb-2.mongodb-configdb-service.${NAMESPACE_ID}.svc.cluster.local:27019\" }
+            ]
+        });"
+
+    echo -e "\e[31mShow the mongodb config status\e[0m"
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID mongodb-configdb-0 -c mongodb-configdb-container -- mongo --port 27019 --quiet --eval 'while (rs.status().hasOwnProperty("myState") && rs.status().myState != 1) { print("."); sleep(1000); };'
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID mongodb-configdb-0 -c mongodb-configdb-container -- mongo --port 27019 --quiet --eval 'rs.status();'
+    #### End Config Cluster
+
+    #### Sharded Cluster
+    echo -e "\e[31mDeploy MongoDB sharded cluster\e[0m"
+    kubectl --v=0 apply -f ./kubernetes/mongodb-sharded-service-stateful.yaml
+
+    for i in 0 1 2
+    do
+        until kubectl --v=0 exec --namespace=$NAMESPACE_ID mongodb-sharded-$i -c mongodb-sharded-container -- mongo --port 27017 --quiet --eval 'db.getMongo()'; do
+            echo -n "mongodb-sharded-$i: "
+        done
+    done
+
+    echo -e "\e[31mInitialize the replica set sharded\e[0m"
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID mongodb-sharded-0 -c mongodb-sharded-container -- mongo --port 27017 --quiet --eval "rs.initiate({ 
+        _id: \"ReplSetSharded\",
+        version: 1, members: [ 
+                { _id: 0, host: \"mongodb-sharded-0.mongodb-sharded-service.${NAMESPACE_ID}.svc.cluster.local:27017\"},
+                { _id: 1, host: \"mongodb-sharded-1.mongodb-sharded-service.${NAMESPACE_ID}.svc.cluster.local:27017\"},
+                { _id: 2, host: \"mongodb-sharded-2.mongodb-sharded-service.${NAMESPACE_ID}.svc.cluster.local:27017\"}
+            ]
+        });"
+
+    echo -e "\e[31mShow the mongodb sharded status\e[0m"
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID mongodb-sharded-0 -c mongodb-sharded-container -- mongo --port 27017 --quiet --eval 'while (rs.status().hasOwnProperty("myState") && rs.status().myState != 1) { print("."); sleep(1000); };'
+
+    sleep 1m
+
+    echo -e "\e[31mCreating user: 'admin' on Sharded Cluster\e[0m"
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID mongodb-sharded-0 -c mongodb-sharded-container -- mongo --port 27017 --quiet --eval 'db.getSiblingDB("admin").createUser({ user:"'"${SHARDED_USER}"'", pwd:"'"${SHARDED_PASSWD}"'", roles: [{ role: "userAdminAnyDatabase", db: "admin" }, { "role" : "clusterAdmin", "db" : "admin" }] });'
+
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID mongodb-sharded-0 -c mongodb-sharded-container -- mongo -u ${SHARDED_USER} -p ${SHARDED_PASSWD} --authenticationDatabase admin --port 27017 --quiet --eval 'rs.status();'
+    #### End Sharded Cluster
+
+    #### Mongos Router
+    echo -e "\e[31mDeploy the Mongos router\e[0m"
+    kubectl --v=0 apply -f ./kubernetes/mongodb-mongos-service-stateful.yaml
+
+    for i in 0
+    do
+        until kubectl --v=0 exec --namespace=$NAMESPACE_ID mongos-router-$i -c mongos-container -- mongo --port 27017 --quiet --eval 'db.getMongo()'; do
+            echo -n ""
+        done
+    done
+
+    echo -e "\e[31mCreating user: 'admin' on Mongos Router\e[0m"
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID $(kubectl get pod -l "tier=routers" -o jsonpath='{.items[0].metadata.name}' --namespace=${NAMESPACE_ID}) -c mongos-container -- mongo --port 27017 --quiet --eval 'db.getSiblingDB("admin").createUser({ user:"'"${MONGOS_USER}"'", pwd:"'"${MONGOS_PASSWD}"'", roles: [{ role: "userAdminAnyDatabase", db: "admin" }, { "role" : "clusterAdmin", "db" : "admin" }] });'
+
+    echo -e "\e[31mInitialize the MongoDB sharded cluster into Mongos Router\e[0m"
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID $(kubectl get pod -l "tier=routers" -o jsonpath='{.items[0].metadata.name}' --namespace=${NAMESPACE_ID}) -c mongos-container -- mongo -u ${MONGOS_USER} -p ${MONGOS_PASSWD} --authenticationDatabase admin --port 27017 --quiet --eval 'sh.addShard("ReplSetSharded/mongodb-sharded-0.mongodb-sharded-service.'${NAMESPACE_ID}'.svc.cluster.local:27017,mongodb-sharded-1.mongodb-sharded-service.'${NAMESPACE_ID}'.svc.cluster.local:27017,mongodb-sharded-2.mongodb-sharded-service.'${NAMESPACE_ID}'.svc.cluster.local:27017");'
+
+    echo -e "\e[31mShow the mongodb sharded status\e[0m"
+    kubectl --v=0 exec --namespace=$NAMESPACE_ID $(kubectl get pod -l "tier=routers" -o jsonpath='{.items[0].metadata.name}' --namespace=${NAMESPACE_ID}) -c mongos-container -- mongo -u ${MONGOS_USER} -p ${MONGOS_PASSWD} --authenticationDatabase admin --port 27017 --quiet --eval 'sh.status()'
+
+    echo -e "\e[31mDeploy Mongos External Service\e[0m"
+    kubectl --v=0 apply -f ./kubernetes/mongodb-mongos-service-load-balancer-aws.yaml
+    #### End Mongos Router
+
+    kubectl --v=0 --namespace=$NAMESPACE_ID get all
+    echo -e "\e[31mConnection: mongo --host $(kubectl --namespace=${NAMESPACE_ID} get service/mongos-router-external-service -o=json | jq -r '.status.loadBalancer.ingress | .[0].hostname') -u ${MONGOS_USER} -p ${MONGOS_PASSWD} --authenticationDatabase admin admin\e[0m"
+
+}
+
+
+destroy() {
+
+    kubectl --v=0 --namespace=$NAMESPACE_ID delete service/mongos-router-service service/mongos-router-external-service service/mongodb-sharded-service service/mongodb-configdb-service statefulset.apps/mongos-router statefulset.apps/mongodb-sharded statefulset.apps/mongodb-configdb
+    kubectl --v=0 --namespace=$NAMESPACE_ID delete pvc mongodb-configdb-persistent-storage-claim-mongodb-configdb-0 mongodb-configdb-persistent-storage-claim-mongodb-configdb-1 mongodb-configdb-persistent-storage-claim-mongodb-configdb-2 mongodb-sharded-persistent-storage-claim-mongodb-sharded-0 mongodb-sharded-persistent-storage-claim-mongodb-sharded-1 mongodb-sharded-persistent-storage-claim-mongodb-sharded-2
+
+    echo "kops: Destroy cluster"
+    kops delete cluster --name=$(terraform output cluster_name) --state=$(terraform output state_store) --yes
+    
+    echo "terraform: Destroy terraform"
+    terraform destroy -auto-approve
+    
+    echo "bash: Clean obsolete files"
+    rm ./tfplan; rm -fr ./.terraform; rm -f ./terraform.tfstate*; rm -fr "$TMP_KUBE"; ls -la
+
+}
+
+
+connection() {
+
+    echo "Connection: mongo -u ${MONGOS_USER} -p ${MONGOS_PASSWD} --authenticationDatabase admin admin --port 27017 --host $(kubectl --namespace=${NAMESPACE_ID} get service/mongos-router-external-service -o=json | jq -r '.status.loadBalancer.ingress | .[0].hostname')"
+
+}
+
+
+if [ $# -eq 0 ]; then
+    usage
+    exit 1
+else
+    if [ $PARAM == setup ]; then
+        setup
+        exit 0
+    elif [ $PARAM == provision ]; then
+        provision
+        exit 0
+    elif [ $PARAM == connection ]; then
+        connection
+        exit 0
+    elif [ $PARAM == destroy ]; then
+        destroy
+        exit 0
+    else
+        echo -e "Error parameters"
+        usage
+        exit 1
+    fi
+fi

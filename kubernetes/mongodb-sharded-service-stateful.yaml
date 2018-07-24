@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-sharded-service
+  namespace: develop
+  labels:
+    name: mongodb-sharded
+spec:
+  ports:
+  - port: 27017
+    targetPort: 27017
+  clusterIP: None
+  selector:
+    role: mongodb-sharded
+
+---
+
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: mongodb-sharded
+  namespace: develop
+spec:
+  serviceName: mongodb-sharded-service
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        role: mongodb-sharded
+        tier: maindb
+        replicaset: ReplSetSharded
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: replicaset
+                  operator: In
+                  values:
+                  - ReplSetSharded
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 10
+      volumes:
+        - name: secrets-volume
+          secret:
+            secretName: shared-bootstrap-data
+            defaultMode: 256
+      containers:
+        - name: mongodb-sharded-container
+          image: mongo
+          command:
+            - "numactl"
+            - "--interleave=all"
+            - "mongod"
+            - "--port"
+            - "27017"
+            - "--wiredTigerCacheSizeGB"
+            - "0.25"
+            - "--bind_ip"
+            - "0.0.0.0"
+            - "--shardsvr"
+            - "--replSet"
+            - "ReplSetSharded"
+            - "--auth"
+            - "--clusterAuthMode"
+            - "keyFile"
+            - "--keyFile"
+            - "/etc/secrets-volume/internal-auth-mongodb-keyfile"
+            - "--setParameter"
+            - "authenticationMechanisms=SCRAM-SHA-1"
+          resources:
+            requests:
+              cpu: 0.10
+              memory: 128Mi
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: secrets-volume
+              readOnly: true
+              mountPath: /etc/secrets-volume
+            - name: mongodb-sharded-persistent-storage-claim
+              mountPath: /data/db
+  volumeClaimTemplates:
+  - metadata:
+      name: mongodb-sharded-persistent-storage-claim
+      annotations:
+        volume.beta.kubernetes.io/storage-class: "fast"
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 20Gi
