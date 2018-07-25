@@ -2,7 +2,17 @@
 
 Provision a MongoDB Sharded Cluster with Terraform and Kops (Kubernetes Cluster) on Amazon Web Services.
 
-## Requirements:
+## Usage
+
+### Quick Start
+
+Run the script with parameter ```provision```:
+
+```
+./run provision
+``` 
+ 
+### Requirements
 
 - [Install Terraform](https://www.terraform.io/intro/getting-started/install.html)
 - [Install KOPS](https://github.com/kubernetes/kops#linux)
@@ -17,14 +27,20 @@ Or install all depencencies with the script:
 
 **Important:**
 
-- AWS Credentials with all permission for create EC2 instances, Security Groups, Elastic Container Registry (ECR), VPC, Subnet, Internet Gateway, ELB and S3 Bucket.
+AWS Credentials with all permission for create EC2 instances, Security Groups, Elastic Container Registry (ECR), VPC, Subnet, Internet Gateway, ELB and S3 Bucket.
 
-## How this work:
+### What does this do?
 
-## Quick Start:
+This is a set of terraform files and bash scripting designed to create a Kubernetes cluster environment from scratch with MongoDB Sharded Cluster on Amazon Web Services.
 
-Run the script with parameters:
+### Other options:
+
+Other functions, please run the script with parameter ```usage```:
 
 ```
-./run provision
+./run usage
 ``` 
+
+## Contributing
+
+We welcome contributions! If you have an idea or contribution that might improve this repository, see CONTRIBUTING for more information on how to get started. Questions are also welcome (as issues). We gladly credit all contributors.
