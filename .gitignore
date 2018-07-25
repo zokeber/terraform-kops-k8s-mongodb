@@ -1,6 +1,7 @@
 kubernetes/tmp/
 /kops/ 
 terraform.tfstate*
+.terraform.tfstate.lock.info
 tfplan
 .terraform
 
