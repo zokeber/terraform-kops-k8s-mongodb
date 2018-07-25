@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mongodb-configdb-service
-  namespace: develop
+  namespace: NAMESPACE
   labels:
     name: mongodb-configdb
 spec:
@@ -19,7 +19,7 @@ apiVersion: apps/v1beta1
 kind: StatefulSet
 metadata:
   name: mongodb-configdb
-  namespace: develop
+  namespace: NAMESPACE
 spec:
   serviceName: mongodb-configdb-service
   replicas: 3
@@ -92,4 +92,4 @@ spec:
       accessModes: [ "ReadWriteOnce" ]
       resources:
         requests:
-          storage: 5Gi
+          storage: CONFIG_DISKGi

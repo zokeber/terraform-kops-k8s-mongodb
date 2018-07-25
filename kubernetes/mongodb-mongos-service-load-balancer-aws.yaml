@@ -8,7 +8,7 @@ metadata:
     service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "10"
     service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "30"
   name: mongos-router-external-service
-  namespace: develop
+  namespace: NAMESPACE
   labels:
     name: mongos-router-external
 spec:
@@ -20,4 +20,4 @@ spec:
     role: mongos-router
   type: LoadBalancer
   loadBalancerSourceRanges:
-  - 0.0.0.0/0
+  - MYIP

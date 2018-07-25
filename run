@@ -4,7 +4,7 @@
 CLUSTERNAME='mongodb.k8s.local'
 
 # Environment
-NAMESPACE_ID="develop"
+NAMESPACE_ID="stage"
 
 #Kubernetes version
 KUBERNETES_VER="1.10.5"
@@ -27,6 +27,10 @@ MASTER_SIZE="t2.medium"
 # Master and Nodes Volumes size
 NODE_VOLUME_SIZE=10
 MASTER_VOLUME_SIZE=10
+
+# MongoDB Sharded Cluster Disks
+MONGO_CONFIG_DISK=8
+MONGO_SHARD_DISK=24
 
 # For kubernetes files
 TMP_KUBE='./kops'
@@ -142,14 +146,21 @@ provision() {
         exit 1
     fi
 
-    echo "kubectl: Get all nodes including all namespaces"
-    kubectl --v=0 get all --all-namespaces
+    mkdir -p ./kubernetes/tmp/
+    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g' ./kubernetes/namespace.yaml > ./kubernetes/tmp/namespace-${NAMESPACE_ID}.yaml
+    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g' ./kubernetes/mongodb-storageclass-ssd-aws.yaml > ./kubernetes/tmp/mongodb-storageclass-ssd-aws-${NAMESPACE_ID}.yaml
+    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g; s/CONFIG_DISK/'${MONGO_CONFIG_DISK}'/g' ./kubernetes/mongodb-configdb-service-stateful.yaml > ./kubernetes/tmp/mongodb-configdb-service-stateful-${NAMESPACE_ID}.yaml
+    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g; s/SHARD_DISK/'${MONGO_SHARD_DISK}'/g' ./kubernetes/mongodb-sharded-service-stateful.yaml > ./kubernetes/tmp/mongodb-sharded-service-stateful-${NAMESPACE_ID}.yaml
+    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g' ./kubernetes/mongodb-mongos-service-stateful.yaml > ./kubernetes/tmp/mongodb-mongos-service-stateful-${NAMESPACE_ID}.yaml
+    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g; s/MYIP/'${MYIP}'/g' ./kubernetes/mongodb-mongos-service-load-balancer-aws.yaml > ./kubernetes/tmp/mongodb-mongos-service-load-balancer-aws-${NAMESPACE_ID}.yaml
+
+    echo "  zones: $(terraform output -json availability_zones | jq -r '.value|join(",")')" >> ./kubernetes/tmp/mongodb-storageclass-ssd-aws-${NAMESPACE_ID}.yaml
 
     echo "kubectl: Create the namespace ${NAMESPACE_ID}"
-    kubectl --v=0 apply -f ./kubernetes/namespace.yaml
+    kubectl --v=0 apply -f ./kubernetes/tmp/namespace-${NAMESPACE_ID}.yaml
 
     echo "kubectl: Create storage class"
-    kubectl --v=0 apply -f ./kubernetes/mongodb-storageclass-ssd-aws.yaml
+    kubectl --v=0 apply -f ./kubernetes/tmp/mongodb-storageclass-ssd-aws-${NAMESPACE_ID}.yaml
 
     if [ -x "$(command -v openssl)" ]; then
         openssl rand -base64 741 > $TMPFILE
@@ -162,7 +173,7 @@ provision() {
 
     #### Config Cluster
     echo -e "\e[31mDeploy MongoDB config cluster\e[0m"
-    kubectl --v=0 apply -f ./kubernetes/mongodb-configdb-service-stateful.yaml
+    kubectl --v=0 apply -f ./kubernetes/tmp/mongodb-configdb-service-stateful-${NAMESPACE_ID}.yaml
 
     for i in 0 1 2
     do
@@ -188,7 +199,7 @@ provision() {
 
     #### Sharded Cluster
     echo -e "\e[31mDeploy MongoDB sharded cluster\e[0m"
-    kubectl --v=0 apply -f ./kubernetes/mongodb-sharded-service-stateful.yaml
+    kubectl --v=0 apply -f ./kubernetes/tmp/mongodb-sharded-service-stateful-${NAMESPACE_ID}.yaml
 
     for i in 0 1 2
     do
@@ -220,7 +231,7 @@ provision() {
 
     #### Mongos Router
     echo -e "\e[31mDeploy the Mongos router\e[0m"
-    kubectl --v=0 apply -f ./kubernetes/mongodb-mongos-service-stateful.yaml
+    kubectl --v=0 apply -f ./kubernetes/tmp/mongodb-mongos-service-stateful-${NAMESPACE_ID}.yaml
 
     for i in 0
     do
@@ -239,7 +250,7 @@ provision() {
     kubectl --v=0 exec --namespace=$NAMESPACE_ID $(kubectl get pod -l "tier=routers" -o jsonpath='{.items[0].metadata.name}' --namespace=${NAMESPACE_ID}) -c mongos-container -- mongo -u ${MONGOS_USER} -p ${MONGOS_PASSWD} --authenticationDatabase admin --port 27017 --quiet --eval 'sh.status()'
 
     echo -e "\e[31mDeploy Mongos External Service\e[0m"
-    kubectl --v=0 apply -f ./kubernetes/mongodb-mongos-service-load-balancer-aws.yaml
+    kubectl --v=0 apply -f ./kubernetes/tmp/mongodb-mongos-service-load-balancer-aws-${NAMESPACE_ID}.yaml
     #### End Mongos Router
 
     kubectl --v=0 --namespace=$NAMESPACE_ID get all

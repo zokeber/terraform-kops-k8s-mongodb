@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mongos-router-service
-  namespace: develop
+  namespace: NAMESPACE
   labels:
     name: mongos-router
 spec:
@@ -19,7 +19,7 @@ apiVersion: apps/v1beta1
 kind: StatefulSet
 metadata:
   name: mongos-router
-  namespace: develop
+  namespace: NAMESPACE
 spec:
   serviceName: mongos-router-service
   replicas: 1
@@ -60,7 +60,7 @@ spec:
             - "--bind_ip"
             - "0.0.0.0"
             - "--configdb"
-            - "ReplSetConfig/mongodb-configdb-0.mongodb-configdb-service.develop.svc.cluster.local:27019,mongodb-configdb-1.mongodb-configdb-service.develop.svc.cluster.local:27019,mongodb-configdb-2.mongodb-configdb-service.develop.svc.cluster.local:27019"
+            - "ReplSetConfig/mongodb-configdb-0.mongodb-configdb-service.NAMESPACE.svc.cluster.local:27019,mongodb-configdb-1.mongodb-configdb-service.NAMESPACE.svc.cluster.local:27019,mongodb-configdb-2.mongodb-configdb-service.NAMESPACE.svc.cluster.local:27019"
             - "--clusterAuthMode"
             - "keyFile"
             - "--keyFile"
