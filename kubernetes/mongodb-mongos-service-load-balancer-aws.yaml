@@ -20,4 +20,4 @@ spec:
     role: mongos-router
   type: LoadBalancer
   loadBalancerSourceRanges:
-  - MYIP
+  - MY_IP
