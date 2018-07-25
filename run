@@ -36,7 +36,10 @@ MONGO_SHARD_DISK=24
 TMP_KUBE='./kops'
 
 # My IP address
-MYIP="$(curl -s https://diagnostic.opendns.com/myip)/32"
+MYIP=$(curl -s https://diagnostic.opendns.com/myip)
+MYIP_KUBE="${MYIP}/32"
+MYIP_NLB="${MYIP}\/32"
+
 
 # Shard Replica Sets:
 # shard-local user and cluster administrator
@@ -107,9 +110,9 @@ provision() {
         kops create cluster --v 0 --name=$(terraform output cluster_name) --state=$(terraform output state_store) \
             --master-size=$MASTER_SIZE --master-volume-size=$MASTER_VOLUME_SIZE --master-count=$MASTER_COUNT --master-zones=$(terraform output -json availability_zones | jq -r '.value|join(",")') \
             --node-size=$NODE_SIZE --node-volume-size=$NODE_VOLUME_SIZE --node-count=$NODE_COUNT --zones=$(terraform output -json availability_zones | jq -r '.value|join(",")') \
-            --admin-access="$MYIP" \
+            --admin-access="$MYIP_KUBE" \
             --admin-access=$(terraform output -module=vpc cidr_block) \
-            --ssh-access="$MYIP" \
+            --ssh-access="$MYIP_KUBE" \
             --ssh-access=$(terraform output -module=vpc cidr_block) \
             --vpc=$(terraform output vpc_id) \
             --network-cidr=$(terraform output -module=vpc cidr_block) \
@@ -149,11 +152,10 @@ provision() {
     mkdir -p ./kubernetes/tmp/
     sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g' ./kubernetes/namespace.yaml > ./kubernetes/tmp/namespace-${NAMESPACE_ID}.yaml
     sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g' ./kubernetes/mongodb-storageclass-ssd-aws.yaml > ./kubernetes/tmp/mongodb-storageclass-ssd-aws-${NAMESPACE_ID}.yaml
+    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g' ./kubernetes/mongodb-mongos-service-stateful.yaml > ./kubernetes/tmp/mongodb-mongos-service-stateful-${NAMESPACE_ID}.yaml
     sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g; s/CONFIG_DISK/'${MONGO_CONFIG_DISK}'/g' ./kubernetes/mongodb-configdb-service-stateful.yaml > ./kubernetes/tmp/mongodb-configdb-service-stateful-${NAMESPACE_ID}.yaml
     sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g; s/SHARD_DISK/'${MONGO_SHARD_DISK}'/g' ./kubernetes/mongodb-sharded-service-stateful.yaml > ./kubernetes/tmp/mongodb-sharded-service-stateful-${NAMESPACE_ID}.yaml
-    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g' ./kubernetes/mongodb-mongos-service-stateful.yaml > ./kubernetes/tmp/mongodb-mongos-service-stateful-${NAMESPACE_ID}.yaml
-    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g; s/MYIP/'${MYIP}'/g' ./kubernetes/mongodb-mongos-service-load-balancer-aws.yaml > ./kubernetes/tmp/mongodb-mongos-service-load-balancer-aws-${NAMESPACE_ID}.yaml
-
+    sed -e 's/NAMESPACE/'${NAMESPACE_ID}'/g; s/MY_IP/'${MYIP_NLB}'/g' ./kubernetes/mongodb-mongos-service-load-balancer-aws.yaml > ./kubernetes/tmp/mongodb-mongos-service-load-balancer-aws-${NAMESPACE_ID}.yaml
     echo "  zones: $(terraform output -json availability_zones | jq -r '.value|join(",")')" >> ./kubernetes/tmp/mongodb-storageclass-ssd-aws-${NAMESPACE_ID}.yaml
 
     echo "kubectl: Create the namespace ${NAMESPACE_ID}"
@@ -271,7 +273,7 @@ destroy() {
     terraform destroy -auto-approve
     
     echo "bash: Clean obsolete files"
-    rm ./tfplan; rm -fr ./.terraform; rm -f ./terraform.tfstate*; rm -fr "$TMP_KUBE"; ls -la
+    rm ./tfplan; rm -fr ./.terraform; rm -f ./terraform.tfstate*; rm -fr "$TMP_KUBE"; rm -fr ./kubernetes/tmp/; ls -la
 
 }
 
