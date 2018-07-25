@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # First, read about: https://github.com/kubernetes/kops/blob/master/docs/aws.md#configure-dns
-CLUSTERNAME='mongo.k8s.local'
+CLUSTERNAME='mongodb.k8s.local'
 
 # Environment
 NAMESPACE_ID="develop"
@@ -94,6 +94,7 @@ provision() {
         terraform init -input=false; terraform plan -var name="$CLUSTERNAME" -var vpc_cidr="$VPC_CIDR" -out tfplan -input=false; terraform apply -input=false tfplan
     else
         echo "Install terraform with: ./run setup"
+        exit 1
     fi
 
     if [ -x "$(command -v terraform)" ]; then
