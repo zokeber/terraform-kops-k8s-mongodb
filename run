@@ -141,9 +141,6 @@ provision() {
         echo "kops: Validate the cluster"
         kops validate cluster --name=$(terraform output cluster_name) --state=$(terraform output state_store)
 
-        echo "terraform: Terraforming on AWS"
-        terraform init -input=false; terraform plan -var name="$CLUSTERNAME" -var vpc_cidr="$VPC_CIDR" -out tfplan -input=false; terraform apply -input=false tfplan
-    
     else
         echo "Install kops with ./run setup"
         exit 1
