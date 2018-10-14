@@ -43,4 +43,4 @@ Other functions, please run the script with parameter ```usage```:
 
 ## Contributing
 
-We welcome contributions! If you have an idea or contribution that might improve this repository, see CONTRIBUTING for more information on how to get started. Questions are also welcome (as issues). We gladly credit all contributors.
+We welcome contributions! If you have an idea or contribution that might improve this repository, see [CONTRIBUTING](https://github.com/zokeber/terraform-kops-k8s-mongodb/blob/master/CONTRIBUTING.md) for more information on how to get started. Questions are also welcome (as issues). We gladly credit all contributors.
